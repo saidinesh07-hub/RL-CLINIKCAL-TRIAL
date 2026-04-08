@@ -3,10 +3,8 @@ title: RL Clinical Trial Optimization
 emoji: 🤖
 colorFrom: blue
 colorTo: purple
-sdk: gradio
-sdk_version: "4.36.1"
+sdk: docker
 python_version: "3.10"
-app_file: app.py
 pinned: false
 ---
 # AI-Powered Clinical Trial Optimization System
