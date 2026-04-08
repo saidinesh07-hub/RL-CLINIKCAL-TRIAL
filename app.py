@@ -2,20 +2,24 @@ import gradio as gr
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from inference import run_simulation
+# ✅ FIXED IMPORT
+from inference import run_inference
 from env import ClinicalTrialEnv
 
+# Global env
 env = ClinicalTrialEnv("medium")
 
 
-# 🔥 OpenEnv functions (NO FastAPI)
+# ================= OPENENV API =================
 
 def reset():
     result = env.reset()
-    return {"observation": result.get("observation", {})}
+    return {
+        "observation": result.get("observation", {})
+    }
 
 
-def step(action=0):
+def step(action: int = 0):
     result = env.step(action)
     return {
         "observation": result.get("observation", {}),
@@ -26,7 +30,7 @@ def step(action=0):
     }
 
 
-# ================= UI =================
+# ================= UI HELPERS =================
 
 def create_table(data):
     return pd.DataFrame(data)
@@ -39,33 +43,52 @@ def create_plot(data):
     plt.xlabel("Episode")
     plt.ylabel("Reward")
     plt.title("Reward vs Episode")
+    plt.grid(True)
     return plt
 
 
-def on_run_simulation(task, agent, episodes):
-    score, episodes_data = run_simulation(task, agent, episodes)
+# ================= MAIN FUNCTION =================
 
-    summary = f"Final Score: {score:.4f}"
+def on_run_simulation(task, agent, episodes):
+    results = run_inference(task, agent, int(episodes))
+
+    summary = f"""Final Score: {results['score']}
+Mean Reward: {results['mean_reward']}
+Assignment Rate: {results['assignment_rate']}
+Diversity Index: {results['diversity_index']}"""
+
+    episodes_data = results["episodes"]
+
     table = create_table(episodes_data)
     plot = create_plot(episodes_data)
 
     return summary, table, plot
 
 
+# ================= UI =================
+
 with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
 
     gr.Markdown("## AI Clinical Trial Optimization")
 
     with gr.Row():
-        task_input = gr.Dropdown(["easy", "medium", "hard"], value="medium")
-        agent_input = gr.Dropdown(["random", "rule_based", "greedy_fairness", "q_learning"], value="rule_based")
-        episodes_input = gr.Slider(1, 50, value=10, step=1)
+        task_input = gr.Dropdown(
+            ["easy", "medium", "hard"], value="medium", label="Task"
+        )
+        agent_input = gr.Dropdown(
+            ["random", "rule_based", "greedy_fairness", "q_learning"],
+            value="rule_based",
+            label="Agent"
+        )
+        episodes_input = gr.Slider(
+            1, 50, value=10, step=1, label="Episodes"
+        )
 
     btn = gr.Button("Run Simulation")
 
-    summary_out = gr.Textbox()
-    table_out = gr.Dataframe()
-    plot_out = gr.Plot()
+    summary_out = gr.Textbox(label="Summary")
+    table_out = gr.Dataframe(label="Episodes")
+    plot_out = gr.Plot(label="Reward Graph")
 
     btn.click(
         on_run_simulation,
@@ -74,5 +97,7 @@ with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
     )
 
 
-# 🔥 CRITICAL: expose endpoints via gradio
-demo.queue().launch(server_name="0.0.0.0", server_port=7860)
+# ================= LAUNCH =================
+
+if __name__ == "__main__":
+    demo.queue().launch(server_name="0.0.0.0", server_port=7860)
