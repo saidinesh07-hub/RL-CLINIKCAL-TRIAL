@@ -4,17 +4,18 @@ import matplotlib.pyplot as plt
 
 from inference import run_inference
 from env import ClinicalTrialEnv
-from tasks import TASK_MAP   # ✅ IMPORTANT
+from tasks import TASK_MAP
 
-# ✅ FIXED ENV INIT
+
+# ================= ENV INIT (FIXED) =================
 env = ClinicalTrialEnv(TASK_MAP["medium"])
 
 
-# ================= OPENENV =================
+# ================= OPENENV ENDPOINTS =================
 
 def reset():
     global env
-    env = ClinicalTrialEnv(TASK_MAP["medium"])  # ✅ FIXED
+    env = ClinicalTrialEnv(TASK_MAP["medium"])
     result = env.reset()
     return {
         "observation": result.get("observation", {})
@@ -50,7 +51,7 @@ def create_plot(data):
     return plt
 
 
-# ================= MAIN =================
+# ================= MAIN FUNCTION =================
 
 def on_run_simulation(task, agent, episodes):
     results = run_inference(task, agent, int(episodes))
@@ -76,21 +77,21 @@ with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
 
     with gr.Row():
         task_input = gr.Dropdown(
-            ["easy", "medium", "hard"], value="medium", label="Task"
+            ["easy", "medium", "hard"], value="medium", label="Task Difficulty"
         )
         agent_input = gr.Dropdown(
             ["random", "rule_based", "greedy_fairness", "q_learning"],
             value="rule_based",
-            label="Agent"
+            label="Agent Type"
         )
         episodes_input = gr.Slider(
-            1, 50, value=10, step=1, label="Episodes"
+            1, 50, value=10, step=1, label="Number of Episodes"
         )
 
     btn = gr.Button("Run Simulation")
 
     summary_out = gr.Textbox(label="Summary")
-    table_out = gr.Dataframe(label="Episodes")
+    table_out = gr.Dataframe(label="Episode Results")
     plot_out = gr.Plot(label="Reward Graph")
 
     btn.click(
