@@ -9,6 +9,8 @@ env = ClinicalTrialEnv("medium")
 current_state = env.reset()["observation"]
 terminated_flag = False
 reward_history = []
+assignment_history = []
+step_history = []
 
 
 def fmt_value(value):
@@ -67,14 +69,52 @@ def mini_card(title: str, icon: str, value: str, accent: str = "blue"):
     '''
 
 
-def top_summary(state):
+def compute_dashboard_metrics(state):
+    system = state.get("system", {}) or {}
+    assigned = int(system.get("patients_assigned", 0))
+    total_patients = max(int(system.get("total_patients", 1)), 1)
+    total_steps = len(step_history)
+
+    acceptance_rate = assigned / total_steps if total_steps > 0 else 0.0
+    avg_reward = sum(reward_history) / len(reward_history) if reward_history else 0.0
+    throughput = assigned / total_patients
+
+    return {
+        "step": int(system.get("step", 0)),
+        "assigned": assigned,
+        "rejected": int(system.get("patients_rejected", 0)),
+        "invalid_actions": int(system.get("invalid_actions", 0)),
+        "acceptance_rate": acceptance_rate,
+        "avg_reward": avg_reward,
+        "throughput": throughput,
+        "diversity_index": float(system.get("diversity_index", 0.0)),
+        "assignment_rate": float(system.get("assignment_rate", 0.0)),
+        "average_fill_rate": float(system.get("average_fill_rate", 0.0)),
+        "total_patients": total_patients,
+        "total_steps": total_steps,
+    }
+
+
+def top_summary(metrics):
+    return f'''
+        <div class="top-stats">
+            {mini_card("Step", "🧭", esc(metrics["step"]), "blue")}
+            {mini_card("Assigned", "🟢", esc(metrics["assigned"]), "green")}
+            {mini_card("Rejected", "🔴", esc(metrics["rejected"]), "orange")}
+            {mini_card("Acceptance Rate", "📈", f'{metrics["acceptance_rate"]:.2f}', "indigo")}
+        </div>
+    '''
+
+
+def top_summary_from_state(state):
+    metrics = compute_dashboard_metrics(state)
     system = state.get("system", {}) or {}
     return f'''
         <div class="top-stats">
-            {mini_card("Step", "🧭", esc(system.get("step", 0)), "blue")}
-            {mini_card("Assigned", "🟢", esc(system.get("patients_assigned", 0)), "green")}
-            {mini_card("Rejected", "🔴", esc(system.get("patients_rejected", 0)), "orange")}
-            {mini_card("Acceptance Rate", "📈", f'{float(system.get("acceptance_rate", 0.0)):.2f}', "indigo")}
+            {mini_card("Step", "🧭", esc(metrics["step"]), "blue")}
+            {mini_card("Assigned", "🟢", esc(metrics["assigned"]), "green")}
+            {mini_card("Rejected", "🔴", esc(metrics["rejected"]), "orange")}
+            {mini_card("Acceptance Rate", "📈", f'{metrics["acceptance_rate"]:.2f}', "indigo")}
         </div>
     '''
 
@@ -145,12 +185,17 @@ def render_trials_table(state):
         priority = int(trial.get("priority", 0))
         status = trial_statuses.get(trial_id, {})
         valid = bool(status.get("valid", False))
-        reason = status.get("reason", "valid" if valid else "invalid")
+        reason = status.get("reason", "best_available" if valid else "invalid")
 
         if trial_id == recommended_action and recommended_action != 0:
-            status_badge = badge("Recommended", "green")
+            status_badge = badge("best available", "green")
         elif valid:
-            status_badge = badge("Valid", "green")
+            if reason == "partial_match":
+                status_badge = badge("partial match", "yellow")
+            elif reason == "valid_with_penalty":
+                status_badge = badge("valid with penalty", "orange")
+            else:
+                status_badge = badge("best available", "green")
         else:
             status_badge = badge(reason.replace("_", " "), "red")
 
@@ -193,42 +238,43 @@ def render_trials_table(state):
 
 
 def system_cards(state):
-    system = state.get("system", {}) or {}
-    average_reward = float(system.get("average_reward", 0.0))
-    diversity_index = float(system.get("diversity_index", 0.0))
-    invalid_actions = int(system.get("invalid_actions", 0))
+    metrics = compute_dashboard_metrics(state)
 
     return f'''
         <div class="system-grid">
             <div class="mini-card blue">
                 <div class="mini-card-title">🧭 Step</div>
-                <div class="mini-card-value">{esc(system.get("step", 0))}</div>
+                <div class="mini-card-value">{esc(metrics["step"])}</div>
             </div>
             <div class="mini-card green">
                 <div class="mini-card-title">🟢 Assigned Patients</div>
-                <div class="mini-card-value">{esc(system.get("patients_assigned", 0))}</div>
+                <div class="mini-card-value">{esc(metrics["assigned"])}</div>
             </div>
             <div class="mini-card orange">
                 <div class="mini-card-title">🔴 Rejected Patients</div>
-                <div class="mini-card-value">{esc(system.get("patients_rejected", 0))}</div>
+                <div class="mini-card-value">{esc(metrics["rejected"])}</div>
             </div>
             <div class="mini-card indigo">
                 <div class="mini-card-title">📈 Acceptance Rate</div>
-                <div class="mini-card-value">{float(system.get("acceptance_rate", 0.0)):.2f}</div>
+                <div class="mini-card-value">{metrics["acceptance_rate"]:.2f}</div>
             </div>
             <div class="mini-card full-width">
                 <div class="mini-card-title">📊 Average Reward</div>
-                <div class="mini-card-value">{average_reward:.2f}</div>
+                <div class="mini-card-value">{metrics["avg_reward"]:.2f}</div>
+            </div>
+            <div class="mini-card full-width">
+                <div class="mini-card-title">🚀 Throughput</div>
+                <div class="mini-card-value">{metrics["throughput"]:.2f}</div>
             </div>
             <div class="mini-card full-width">
                 <div class="mini-card-title">🛡️ Reliability</div>
-                <div class="mini-card-value">Invalid Actions: {invalid_actions}</div>
+                <div class="mini-card-value">Invalid Actions: {metrics["invalid_actions"]}</div>
             </div>
         </div>
         <div class="progress-stack">
-            {progress_bar("Diversity Index", diversity_index, "indigo")}
-            {progress_bar("Assignment Progress", float(system.get("assignment_rate", 0.0)), "green")}
-            {progress_bar("Average Trial Fill", float(system.get("average_fill_rate", 0.0)), "blue")}
+            {progress_bar("Diversity Index", metrics["diversity_index"], "indigo")}
+            {progress_bar("Assignment Progress", metrics["assignment_rate"], "green")}
+            {progress_bar("Average Trial Fill", metrics["average_fill_rate"], "blue")}
         </div>
     '''
 
@@ -257,7 +303,7 @@ def recommendation_box(state):
         subtitle = esc(reason)
     else:
         tone = "success"
-        title = f"Recommended Action: Trial {recommended_action}"
+        title = f"Recommended Action: {recommended_action}"
         subtitle = esc(reason)
 
     valid_preview = ", ".join(str(item) for item in valid_trials) if valid_trials else "None"
@@ -317,6 +363,14 @@ def action_hint_box(state, action):
     return status_box(f"Action {action} is invalid for the current patient.", "error")
 
 
+def can_step_with_action(state, action: int) -> bool:
+    if terminated_flag:
+        return False
+    system = state.get("system", {}) or {}
+    valid_trial_ids = set(system.get("valid_trials", []))
+    return action == 0 or action in valid_trial_ids
+
+
 def reward_plot():
     figure = plt.figure(figsize=(6.0, 3.0), facecolor="#0f172a")
     axis = figure.add_subplot(111)
@@ -326,18 +380,28 @@ def reward_plot():
         spine.set_color("#334155")
     axis.grid(True, color="#334155", alpha=0.35, linewidth=0.8)
 
-    if reward_history:
-        x_values = np.arange(1, len(reward_history) + 1)
-        y_values = np.array(reward_history, dtype=float)
-        if len(x_values) > 2:
-            dense_x = np.linspace(x_values.min(), x_values.max(), 200)
-            dense_y = np.interp(dense_x, x_values, y_values)
-            axis.plot(dense_x, dense_y, color="#60a5fa", linewidth=2.8, alpha=0.9)
-        axis.plot(x_values, y_values, color="#22c55e", linewidth=0, marker="o", markersize=5)
+    if reward_history and step_history:
+        x_values = np.array(step_history, dtype=float)
+        y_values = np.clip(np.array(reward_history, dtype=float), 0.0, 1.0)
+
+        if len(x_values) == 1:
+            axis.plot(x_values, y_values, color="#60a5fa", linewidth=2.2, marker="o", markersize=6, label="Reward")
+            axis.set_xlim(max(0, x_values[0] - 1), x_values[0] + 1)
+        else:
+            axis.plot(x_values, y_values, color="#60a5fa", linewidth=2.2, marker="o", markersize=4.5, alpha=0.9, label="Reward")
+
+            window = min(5, len(y_values))
+            if window >= 2:
+                kernel = np.ones(window, dtype=float) / window
+                smooth_y = np.convolve(y_values, kernel, mode="valid")
+                smooth_x = x_values[window - 1 :]
+                axis.plot(smooth_x, smooth_y, color="#22c55e", linewidth=2.8, alpha=0.95, label=f"Rolling Avg ({window})")
+
         axis.set_title("Reward Progression", color="#e2e8f0", pad=10, fontsize=11)
         axis.set_xlabel("Step", color="#cbd5e1")
         axis.set_ylabel("Reward", color="#cbd5e1")
-        axis.set_xlim(1, max(len(reward_history), 2))
+        axis.legend(loc="lower right", facecolor="#0f172a", edgecolor="#334155", labelcolor="#cbd5e1")
+        axis.set_xlim(min(x_values), max(max(x_values), min(x_values) + 1))
         axis.set_ylim(0, 1)
     else:
         axis.set_title("Reward Progression", color="#e2e8f0", pad=10, fontsize=11)
@@ -362,7 +426,7 @@ def dashboard_state(message: str, kind: str, selected_action: int):
     global current_state
     state = current_state or env.state()
     return (
-        top_summary(state),
+        top_summary_from_state(state),
         patient_section(state),
         render_trials_table(state),
         system_cards(state),
@@ -377,12 +441,14 @@ def dashboard_state(message: str, kind: str, selected_action: int):
 
 
 def reset_simulation(difficulty: str):
-    global env, current_state, terminated_flag, reward_history
+    global env, current_state, terminated_flag, reward_history, assignment_history, step_history
     env = ClinicalTrialEnv(difficulty)
     result = env.reset()
     current_state = result["observation"]
     terminated_flag = False
     reward_history = []
+    assignment_history = []
+    step_history = []
     return dashboard_state(
         f"✅ Simulation reset for {difficulty.capitalize()} task.",
         "success",
@@ -391,7 +457,7 @@ def reset_simulation(difficulty: str):
 
 
 def step_simulation(action: int):
-    global current_state, terminated_flag
+    global current_state, terminated_flag, reward_history, assignment_history, step_history
 
     if terminated_flag:
         return dashboard_state(
@@ -405,13 +471,22 @@ def step_simulation(action: int):
         result = env.step(safe_action)
         current_state = result.get("observation", env.state())
         terminated_flag = bool(result.get("terminated", False))
-        reward_history.append(float(result.get("reward", 0.0)))
+
+        normalized_reward = max(0.0, min(1.0, float(result.get("reward", 0.0))))
+        reward_history.append(normalized_reward)
+
+        system = current_state.get("system", {}) or {}
+        step_history.append(int(system.get("step", len(step_history) + 1)))
+        assignment_history.append(int(system.get("patients_assigned", 0)))
 
         info = result.get("info", {}) or {}
         reason = info.get("reason", "")
         if reason == "assignment_success":
             message = f"✅ Action {safe_action} succeeded."
             kind = "success"
+        elif reason == "assignment_with_penalty":
+            message = f"✅ Action {safe_action} assigned patient with penalty (partial match)."
+            kind = "warning"
         elif reason == "valid_rejection":
             message = "✅ Rejection accepted because no better trial fit was available."
             kind = "success"
@@ -430,12 +505,6 @@ def step_simulation(action: int):
         elif "condition_mismatch" in reason:
             message = f"❌ Action {safe_action} failed: condition mismatch."
             kind = "error"
-        elif "severity_mismatch" in reason:
-            message = f"❌ Action {safe_action} failed: severity mismatch."
-            kind = "error"
-        elif "comorbidity_mismatch" in reason:
-            message = f"❌ Action {safe_action} failed: comorbidity mismatch."
-            kind = "error"
         else:
             message = "✅ Step completed."
             kind = "info"
@@ -451,7 +520,12 @@ def step_simulation(action: int):
 
 def action_changed(action: int):
     state = current_state or env.state()
-    return selected_action_box(state, int(action)), action_hint_box(state, int(action))
+    selected = int(action)
+    return (
+        selected_action_box(state, selected),
+        action_hint_box(state, selected),
+        gr.update(interactive=can_step_with_action(state, selected)),
+    )
 
 
 with gr.Blocks(
@@ -558,6 +632,9 @@ with gr.Blocks(
         .row-valid { background: rgba(16, 185, 129, 0.10); }
         .row-invalid { background: rgba(239, 68, 68, 0.10); }
         .row-recommended { background: rgba(59, 130, 246, 0.14); }
+        .row-valid td { color: #bbf7d0; }
+        .row-invalid td { color: #fecaca; }
+        .row-recommended td { color: #bfdbfe; font-weight: 700; }
         .slots-red { box-shadow: inset 4px 0 0 rgba(239,68,68,.9); }
         .slots-yellow { box-shadow: inset 4px 0 0 rgba(245,158,11,.9); }
 
@@ -675,7 +752,7 @@ with gr.Blocks(
 
     reset_btn.click(fn=reset_simulation, inputs=[difficulty], outputs=outputs)
     step_btn.click(fn=step_simulation, inputs=[action], outputs=outputs)
-    action.change(fn=action_changed, inputs=[action], outputs=[selected_action_html, action_hint_html])
+    action.change(fn=action_changed, inputs=[action], outputs=[selected_action_html, action_hint_html, step_btn])
     demo.load(fn=reset_simulation, inputs=[difficulty], outputs=outputs)
 
 

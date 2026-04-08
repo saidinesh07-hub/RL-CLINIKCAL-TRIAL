@@ -273,51 +273,101 @@ class ClinicalTrialEnv:
             self._invalid_actions += 1
             return 0.0, {"events": ["invalid_trial"], "reason": "invalid_trial"}
 
-        valid, reasons, score = self._assess_trial(patient, trial)
-        if not valid:
+        assessment = self._assess_trial(patient, trial)
+        if not assessment["assignable"]:
             self._invalid_actions += 1
-            info["events"].extend(reasons)
-            info["reason"] = "+".join(reasons)
-            return score, info
+            info["events"].extend(assessment["issues"])
+            info["reason"] = assessment["reason"]
+            return _clamp(assessment["score"]), info
 
         trial.capacity_used += 1
         trial.enrolled_age_groups[patient.age_group] += 1
         self._assigned += 1
 
-        reward = self._assignment_reward(patient, trial)
+        reward = self._assignment_reward(patient, trial, assessment)
         info["events"].append("assigned")
-        info["reason"] = "assignment_success"
+        if assessment["penalty_count"] > 0:
+            info["events"].append("assignment_with_penalty")
+            info["reason"] = "assignment_with_penalty"
+        else:
+            info["reason"] = "assignment_success"
         return _clamp(reward), info
 
-    def _assignment_reward(self, patient: Patient, trial: Trial) -> float:
+    def _assignment_reward(self, patient: Patient, trial: Trial, assessment: dict) -> float:
         reward = 0.40
-        reward += 0.18 if patient.severity in trial.required_severity else 0.0
-        reward += 0.18 if not any(comorbidity in trial.excluded_comorbidities for comorbidity in patient.comorbidities) else 0.0
+        reward += 0.16
+        reward += 0.12 if assessment["severity_match"] else -0.06
+        reward += 0.12 if assessment["comorbidity_match"] else -0.08
         reward += 0.12 * (1.0 - trial.fill_rate)
         reward += 0.08 * ((trial.priority - 1) / 2.0)
         reward += 0.10 * self._diversity_bonus(patient, trial)
         reward -= min(0.01 * patient.wait_steps, 0.08)
         return _clamp(reward)
 
-    def _assess_trial(self, patient: Patient, trial: Trial) -> tuple[bool, list[str], float]:
-        reasons: list[str] = []
+    def _assess_trial(self, patient: Patient, trial: Trial) -> dict:
+        issues: list[str] = []
         if trial.is_full:
-            reasons.append("trial_full")
-        if patient.condition != trial.condition:
-            reasons.append("condition_mismatch")
-        if patient.severity not in trial.required_severity:
-            reasons.append("severity_mismatch")
+            issues.append("trial_full")
+
+        condition_match = patient.condition == trial.condition
+        if not condition_match:
+            issues.append("condition_mismatch")
+
+        severity_match = patient.severity in trial.required_severity
+        if not severity_match:
+            issues.append("severity_mismatch")
 
         bad_comorbidities = [item for item in patient.comorbidities if item in trial.excluded_comorbidities]
-        if bad_comorbidities:
-            reasons.append("comorbidity_mismatch")
+        comorbidity_match = not bad_comorbidities
+        if not comorbidity_match:
+            issues.append("comorbidity_mismatch")
 
-        valid = not reasons
-        if not valid:
-            return False, reasons, 0.0
+        assignable = (not trial.is_full) and condition_match
+        penalty_count = (0 if severity_match else 1) + (0 if comorbidity_match else 1)
 
-        reward = self._assignment_reward(patient, trial)
-        return True, [], reward
+        if not assignable:
+            reason = "trial_full" if trial.is_full else "condition_mismatch"
+            score = 0.05 if reason == "condition_mismatch" else 0.0
+            return {
+                "assignable": False,
+                "condition_match": condition_match,
+                "severity_match": severity_match,
+                "comorbidity_match": comorbidity_match,
+                "penalty_count": penalty_count,
+                "issues": issues,
+                "reason": reason,
+                "score": score,
+                "status": "invalid",
+            }
+
+        base_score = 0.55
+        base_score += 0.12 if severity_match else -0.06
+        base_score += 0.12 if comorbidity_match else -0.08
+        base_score += 0.08 * ((trial.priority - 1) / 2.0)
+        base_score += 0.05 * (1.0 - trial.fill_rate)
+        score = _clamp(base_score)
+
+        if penalty_count == 0:
+            status = "best_available"
+            reason = "best_available"
+        elif penalty_count == 1:
+            status = "valid_with_penalty"
+            reason = "valid_with_penalty"
+        else:
+            status = "partial_match"
+            reason = "partial_match"
+
+        return {
+            "assignable": True,
+            "condition_match": condition_match,
+            "severity_match": severity_match,
+            "comorbidity_match": comorbidity_match,
+            "penalty_count": penalty_count,
+            "issues": issues,
+            "reason": reason,
+            "score": score,
+            "status": status,
+        }
 
     def _recommendation(self, patient: Patient) -> tuple[int, str, list[dict]]:
         trial_statuses = []
@@ -325,21 +375,22 @@ class ClinicalTrialEnv:
         best_score = -1.0
 
         for trial in self.trials:
-            valid, reasons, score = self._assess_trial(patient, trial)
+            assessment = self._assess_trial(patient, trial)
             trial_statuses.append(
                 {
                     "trial_id": trial.trial_id,
-                    "valid": valid,
-                    "reason": "valid" if valid else "+".join(reasons),
-                    "score": float(round(score, 3)),
+                    "valid": bool(assessment["assignable"]),
+                    "reason": assessment["reason"],
+                    "status": assessment["status"],
+                    "score": float(round(assessment["score"], 3)),
                 }
             )
-            if valid and score > best_score:
-                best_score = score
+            if assessment["assignable"] and assessment["score"] > best_score:
+                best_score = assessment["score"]
                 best_trial_id = trial.trial_id
 
         if best_trial_id == 0:
-            return 0, "No valid trial available. Reject recommended.", trial_statuses
+            return 0, "No condition-matched trial available. Reject recommended.", trial_statuses
 
         return best_trial_id, f"Recommended trial {best_trial_id} with score {best_score:.2f}", trial_statuses
 
@@ -418,6 +469,7 @@ class ClinicalTrialEnv:
 
     def _generate_patients(self) -> list[Patient]:
         patients = []
+        available_conditions = [trial.condition for trial in self.trials] if self.trials else CONDITIONS
         for index in range(self.n_patients):
             comorbidities = (
                 self._rng.sample(COMORBIDS, k=self._rng.randint(0, 2))
@@ -427,7 +479,7 @@ class ClinicalTrialEnv:
             patients.append(
                 Patient(
                     patient_id=f"P{index + 1:04d}",
-                    condition=self._rng.choice(CONDITIONS),
+                    condition=self._rng.choice(available_conditions),
                     severity=self._rng.randint(1, 3),
                     age_group=self._rng.choice(AGE_GROUPS),
                     gender=self._rng.choice(GENDERS),
