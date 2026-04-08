@@ -1,4 +1,14 @@
-<<<<<<< HEAD
+---
+title: RL Clinical Trial Optimization
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "4.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
 # AI-Powered Clinical Trial Optimization System
 
 ## 🎯 Problem Statement
@@ -235,4 +245,4 @@ pinned: false
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
->>>>>>> b611ee72559e3f9d15a7235208b2693c88b74d77
+
