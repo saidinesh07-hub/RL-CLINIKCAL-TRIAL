@@ -1,0 +1,131 @@
+name: clinical-trial-patient-matching
+version: "1.0.0"
+description: >
+  A reinforcement learning environment where an agent assigns patients
+  to clinical trials under eligibility, capacity, fairness, and time
+  constraints. Multi-objective reward balances match quality, diversity,
+  and resource utilisation.
+
+domain: healthcare
+tags: [clinical-trials, patient-matching, fairness, multi-objective, scheduling]
+
+observation:
+  type: object
+  properties:
+    patient:
+      type: object
+      properties:
+        patient_id:      {type: string}
+        condition:       {type: string, enum: [oncology, cardiology, neurology, immunology]}
+        severity:        {type: integer, minimum: 1, maximum: 3}
+        age_group:       {type: string, enum: [pediatric, adult, elderly]}
+        gender:          {type: string, enum: [M, F, other]}
+        comorbidities:   {type: array, items: {type: string}}
+        wait_steps:      {type: integer}
+        prior_rejection: {type: boolean}
+    trials:
+      type: array
+      items:
+        type: object
+        properties:
+          trial_id:               {type: integer}
+          condition:              {type: string}
+          required_severity:      {type: array, items: {type: integer}}
+          excluded_comorbidities: {type: array, items: {type: string}}
+          capacity_total:         {type: integer}
+          capacity_used:          {type: integer}
+          slots_remaining:        {type: integer}
+          is_full:                {type: boolean}
+          fill_rate:              {type: number, minimum: 0, maximum: 1}
+          priority:               {type: integer, minimum: 1, maximum: 3}
+          diversity_target:       {type: object}
+    system:
+      type: object
+      properties:
+        step:              {type: integer}
+        total_patients:    {type: integer}
+        patients_assigned: {type: integer}
+        patients_rejected: {type: integer}
+        diversity_index:   {type: number, minimum: 0, maximum: 1}
+        done:              {type: boolean}
+
+action:
+  type: integer
+  description: "0 = reject. 1..N = assign to trial with that ID."
+  minimum: 0
+
+reward:
+  type: number
+  description: >
+    Multi-component reward. Positive for correct condition match,
+    eligibility, diversity improvement, and capacity efficiency.
+    Negative for mismatches, violations, overflow, delay, unjustified rejection.
+
+tasks:
+  - id: task_1_reward_optimization
+    name: "Reward Optimization"
+    description: "Maximize total cumulative reward across episodes"
+    config:
+      n_patients: 50
+      n_trials: 6
+      capacity_range: [6, 12]
+      difficulty: medium
+      fairness_weight: 0.0
+      seed: 42
+    grader: graders.grade_reward
+    score_range: [0.0, 1.0]
+    baseline_scores:
+      random: 0.15
+      rule_based: 0.55
+      target: 0.75
+
+  - id: task_2_fairness_optimization
+    name: "Fairness Optimization"
+    description: "Maintain high diversity score (> 0.8) in patient assignments"
+    config:
+      n_patients: 50
+      n_trials: 6
+      capacity_range: [6, 12]
+      difficulty: hard
+      fairness_weight: 0.3
+      seed: 42
+    grader: graders.grade_diversity
+    score_range: [0.0, 1.0]
+    baseline_scores:
+      random: 0.20
+      greedy_fairness: 0.60
+      target: 0.80
+
+  - id: task_3_balanced_assignment
+    name: "Balanced Assignment"
+    description: "Maintain stable assignment rate and resource utilization"
+    config:
+      n_patients: 100
+      n_trials: 8
+      capacity_range: [5, 10]
+      difficulty: medium
+      fairness_weight: 0.1
+      seed: 42
+    grader: graders.grade_assignment
+    score_range: [0.0, 1.0]
+    baseline_scores:
+      random: 0.10
+      rule_based: 0.45
+      target: 0.70
+
+endpoints:
+  reset:
+    description: "Reset environment and return initial observation"
+    path: "/reset"
+  step:
+    description: "Execute action and return observation, reward, and done flag"
+    path: "/step"
+  state:
+    description: "Get current environment state"
+    path: "/state"
+
+evaluation:
+  episodes: 10
+  deterministic: false
+  aggregate: mean
+  seed_strategy: episode_index

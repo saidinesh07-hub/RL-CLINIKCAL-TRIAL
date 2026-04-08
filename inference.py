@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""
+OpenEnv Inference Script
+Runs simulation without UI, outputs structured logs via stdout
+Usage:
+  python inference.py [task] [agent] [episodes]
+  python inference.py medium rule_based 10
+"""
+import sys
+import os
+from env import ClinicalTrialEnv
+from agent import RandomAgent, RuleBasedAgent, GreedyFairnessAgent, QLearningAgent
+from tasks import TASK_MAP
+
+# Environment variable support
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+MODEL_NAME = os.getenv("MODEL_NAME", "clinical-trial-rl")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+
+
+def build_agent(name: str, n_trials: int):
+    """Instantiate agent from name."""
+    name = name.lower().replace("-", "_")
+    if name == "random":
+        return RandomAgent(n_trials)
+    if name == "greedy_fairness":
+        return GreedyFairnessAgent()
+    if name == "q_learning":
+        return QLearningAgent(n_trials)
+    return RuleBasedAgent()
+
+
+def run_inference(task: str = "medium", agent_name: str = "rule_based", episodes: int = 10) -> dict:
+    """
+    Run simulation and return structured results.
+    Returns dict with overall score and per-episode metrics.
+    """
+    config = dict(TASK_MAP.get(task, TASK_MAP["medium"]))
+    env = ClinicalTrialEnv(config)
+    agent = build_agent(agent_name, config["n_trials"])
+
+    episode_metrics = []
+    total_rewards = []
+    total_assignments = []
+    total_diversities = []
+    episode_data = []
+
+    for ep in range(episodes):
+        result = env.reset(seed=ep)
+        obs = result["observation"]
+        ep_reward = 0.0
+
+        while True:
+            action = agent.act(obs)
+            result = env.step(action)
+            next_obs = result["observation"]
+            reward = result["reward"]
+            ep_reward += reward
+
+            if hasattr(agent, "learn"):
+                agent.learn(obs, action, reward, next_obs, result["terminated"])
+
+            obs = next_obs
+
+            if result["terminated"]:
+                break
+
+        if hasattr(agent, "update_epsilon"):
+            agent.update_epsilon()
+
+        sys_state = obs["system"]
+        assignment_rate = sys_state["patients_assigned"] / max(sys_state["total_patients"], 1)
+        diversity_score = sys_state["diversity_index"]
+
+        total_rewards.append(ep_reward)
+        total_assignments.append(assignment_rate)
+        total_diversities.append(diversity_score)
+
+        episode_data.append({
+            "episode": ep + 1,
+            "reward": ep_reward,
+            "assignment_rate": assignment_rate,
+            "diversity_score": diversity_score,
+        })
+
+    # Compute min/max for reward normalization
+    if total_rewards:
+        min_reward = min(total_rewards)
+        max_reward = max(total_rewards)
+        reward_range = max_reward - min_reward + 1e-8
+    else:
+        min_reward = 0.0
+        max_reward = 0.0
+        reward_range = 1.0
+
+    # Output START marker
+    print("[START]")
+
+    # Print normalized episode data
+    for data in episode_data:
+        normalized_ep_reward = max(0.0, min(1.0, (data["reward"] - min_reward) / reward_range))
+
+        print(f"[STEP] Episode {data['episode']} → reward={normalized_ep_reward:.4f}, "
+              f"assignment={data['assignment_rate']:.4f}, diversity={data['diversity_score']:.4f}")
+
+        episode_metrics.append({
+            "episode": data["episode"],
+            "reward": round(data["reward"], 4),
+            "assignment_rate": round(data["assignment_rate"], 4),
+            "diversity_score": round(data["diversity_score"], 4),
+        })
+
+    # Compute final score (weighted average)
+    avg_reward = sum(total_rewards) / len(total_rewards) if total_rewards else 0.0
+    avg_assignment = sum(total_assignments) / len(total_assignments) if total_assignments else 0.0
+    avg_diversity = sum(total_diversities) / len(total_diversities) if total_diversities else 0.0
+
+    # Final score formula: 0.5 * assignment + 0.3 * diversity + 0.2 * normalized_reward
+    # Normalize reward to [0, 1] range (assuming typical range is -5 to +20)
+    normalized_reward = max(0.0, min(1.0, (avg_reward + 5.0) / 25.0))
+    final_score = max(0.0, min(1.0, 0.5 * avg_assignment + 0.3 * avg_diversity + 0.2 * normalized_reward))
+
+    # Output END marker with final score
+    print(f"[END] Final Score: {final_score:.4f}")
+
+    return {
+        "score": round(final_score, 4),
+        "assignment_rate": round(avg_assignment, 4),
+        "diversity_index": round(avg_diversity, 4),
+        "mean_reward": round(avg_reward, 4),
+        "normalized_reward": round(normalized_reward, 4),
+        "episodes": episode_metrics,
+    }
+
+
+if __name__ == "__main__":
+    task_arg = sys.argv[1] if len(sys.argv) > 1 else "medium"
+    agent_arg = sys.argv[2] if len(sys.argv) > 2 else "rule_based"
+    episodes_arg = int(sys.argv[3]) if len(sys.argv) > 3 else 10
+
+    # Suppress matplotlib if using main.py for UI
+    import matplotlib
+    matplotlib.use("Agg")
+
+    results = run_inference(task_arg, agent_arg, episodes_arg)
+    sys.exit(0)
