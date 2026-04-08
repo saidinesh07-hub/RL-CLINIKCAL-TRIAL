@@ -1,14 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
-import json
 import os
+
 from env import ClinicalTrialEnv
 from agent import RuleBasedAgent
 from tasks import TASK_MAP
-from graders import grade
 
-# Environment variable support
+# Environment variables
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MODEL_NAME = os.getenv("MODEL_NAME", "clinical-trial-rl")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
@@ -23,41 +22,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global environment instance for API sessions
-_env: ClinicalTrialEnv | None = None
+# Global state
+_env = None
 _agent = None
-_step_count = 0
 
 
+# ================= HEALTH =================
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "model": MODEL_NAME,
-    }
+    return {"status": "ok", "model": MODEL_NAME}
 
 
+# ================= RESET (FIXED) =================
 @app.post("/reset")
-async def reset_env(seed: int = 42):
-    """Reset environment and return initial observation."""
-    global _env, _agent, _step_count
+async def reset_env():
+    global _env, _agent
+
     config = dict(TASK_MAP["medium"])
     _env = ClinicalTrialEnv(config)
     _agent = RuleBasedAgent()
-    _step_count = 0
-    result = _env.reset(seed=seed)
+
+    result = _env.reset()
+
     return {
-        "observation": result["observation"],
-        "info": result["info"],
+        "observation": result.get("observation", {})
     }
 
 
-@api.post("/step")
-def step_api():
-    action = 0  # default
+# ================= STEP (FIXED - NO BODY REQUIRED) =================
+@app.post("/step")
+async def step_env():
+    global _env
 
-    result = env.step(action)
+    if _env is None:
+        return {
+            "observation": {},
+            "reward": 0.0,
+            "terminated": True,
+            "truncated": False,
+            "info": {}
+        }
+
+    action = 0  # default (IMPORTANT)
+
+    result = _env.step(action)
 
     return {
         "observation": result.get("observation", {}),
@@ -67,56 +75,24 @@ def step_api():
         "info": {}
     }
 
+
+# ================= OPTIONAL STATE =================
 @app.get("/state")
 async def get_state():
-    """Get current environment state."""
     global _env
     if _env is None:
-        return {"error": "Environment not initialized. Call /reset first."}
+        return {"error": "Environment not initialized"}
     return _env.state()
 
 
+# ================= LEGACY SIMULATION =================
 @app.get("/api/run-simulation")
 async def run_simulation():
-    """Legacy endpoint - run simulation and return episode data."""
-    # Run the Python training script
-    result = subprocess.run([
-        "python", "main.py", "medium", "q_learning", "200"
-    ], capture_output=True, text=True, cwd=os.path.dirname(__file__))
+    result = subprocess.run(
+        ["python", "main.py", "medium", "q_learning", "200"],
+        capture_output=True,
+        text=True,
+        cwd=os.path.dirname(__file__)
+    )
 
-    # Parse the output to extract episode data
-    episodes = []
-    final_metrics = {}
-
-    lines = result.stdout.split('\n')
-    for line in lines:
-        line = line.strip()
-        if line.startswith('Episode ') and ': Reward=' in line:
-            # Parse episode line: "Episode 1: Reward=+5.20, Assignment Rate=0.300, Diversity=0.850"
-            parts = line.split(': ')
-            ep_part = parts[0].split()[1]  # '1'
-            metrics_part = parts[1]  # 'Reward=+5.20, Assignment Rate=0.300, Diversity=0.850'
-            metrics = {}
-            for item in metrics_part.split(', '):
-                key, value = item.split('=')
-                metrics[key.lower().replace(' ', '')] = float(value)
-            episodes.append({
-                "episode": int(ep_part),
-                "reward": metrics['reward'],
-                "assignmentRate": metrics['assignmentrate'],
-                "diversityScore": metrics['diversity']
-            })
-        elif 'Overall score' in line:
-            # Parse evaluation: "    Overall score   : 0.8500 / 1.0000"
-            final_metrics['score'] = float(line.split(':')[1].split('/')[0].strip())
-        elif 'Assignment rate' in line and 'test episodes' not in line:
-            final_metrics['assignmentRate'] = float(line.split(':')[1].strip())
-        elif 'Diversity index' in line:
-            final_metrics['diversity'] = float(line.split(':')[1].strip())
-        elif 'Fill rate' in line:
-            final_metrics['fillRate'] = float(line.split(':')[1].strip())
-        elif 'Mean reward' in line:
-            final_metrics['reward'] = float(line.split(':')[1].strip())
-
-    # Return the parsed episodes data
-    return episodes
+    return {"output": result.stdout}
