@@ -1,47 +1,29 @@
 import gradio as gr
 import pandas as pd
 import matplotlib.pyplot as plt
-from fastapi import FastAPI, Request
 
-# IMPORT your RL function
-from inference import run_simulation
+from inference import run_inference
 from env import ClinicalTrialEnv
+from tasks import TASK_MAP   # ✅ IMPORTANT
 
-# 🔥 FastAPI (for OpenEnv)
-api = FastAPI()
-
-# 🔥 Initialize environment
-env = ClinicalTrialEnv("medium")
+# ✅ FIXED ENV INIT
+env = ClinicalTrialEnv(TASK_MAP["medium"])
 
 
-# ================= API ENDPOINTS =================
+# ================= OPENENV =================
 
-@api.post("/reset")
-def reset_api():
-    try:
-        result = env.reset()
-        return {
-            "observation": result.get("observation", {})
-        }
-    except:
-        return {
-            "observation": {}
-        }
+def reset():
+    global env
+    env = ClinicalTrialEnv(TASK_MAP["medium"])  # ✅ FIXED
+    result = env.reset()
+    return {
+        "observation": result.get("observation", {})
+    }
 
 
-@api.post("/step")
-async def step_api(request: Request = None):
-    action = 0  # default action
-
-    try:
-        if request:
-            data = await request.json()
-            action = data.get("action", 0)
-    except:
-        action = 0
-
+def step(action: int = 0):
+    global env
     result = env.step(action)
-
     return {
         "observation": result.get("observation", {}),
         "reward": float(result.get("reward", 0.0)),
@@ -51,7 +33,7 @@ async def step_api(request: Request = None):
     }
 
 
-# ================= UI FUNCTIONS =================
+# ================= UI HELPERS =================
 
 def create_table(data):
     return pd.DataFrame(data)
@@ -64,10 +46,29 @@ def create_plot(data):
     plt.xlabel("Episode")
     plt.ylabel("Reward")
     plt.title("Reward vs Episode")
+    plt.grid(True)
     return plt
 
 
-# ================= GRADIO UI =================
+# ================= MAIN =================
+
+def on_run_simulation(task, agent, episodes):
+    results = run_inference(task, agent, int(episodes))
+
+    summary = f"""Final Score: {results['score']}
+Mean Reward: {results['mean_reward']}
+Assignment Rate: {results['assignment_rate']}
+Diversity Index: {results['diversity_index']}"""
+
+    episodes_data = results["episodes"]
+
+    table = create_table(episodes_data)
+    plot = create_plot(episodes_data)
+
+    return summary, table, plot
+
+
+# ================= UI =================
 
 with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
 
@@ -75,36 +76,22 @@ with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
 
     with gr.Row():
         task_input = gr.Dropdown(
-            choices=["easy", "medium", "hard"],
-            value="medium",
-            label="Task Difficulty"
+            ["easy", "medium", "hard"], value="medium", label="Task"
         )
         agent_input = gr.Dropdown(
-            choices=["random", "rule_based", "greedy_fairness", "q_learning"],
+            ["random", "rule_based", "greedy_fairness", "q_learning"],
             value="rule_based",
-            label="Agent Type"
+            label="Agent"
         )
         episodes_input = gr.Slider(
-            minimum=1, maximum=50, value=10, step=1,
-            label="Number of Episodes"
+            1, 50, value=10, step=1, label="Episodes"
         )
 
     btn = gr.Button("Run Simulation")
 
     summary_out = gr.Textbox(label="Summary")
-    table_out = gr.Dataframe(label="Episode Results")
-    plot_out = gr.Plot(label="Reward vs Episode")
-
-
-    def on_run_simulation(task, agent, episodes):
-        score, episodes_data = run_simulation(task, agent, episodes)
-
-        summary = f"Final Score: {score:.4f}"
-        table = create_table(episodes_data)
-        plot = create_plot(episodes_data)
-
-        return summary, table, plot
-
+    table_out = gr.Dataframe(label="Episodes")
+    plot_out = gr.Plot(label="Reward Graph")
 
     btn.click(
         on_run_simulation,
@@ -116,4 +103,4 @@ with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
 # ================= LAUNCH =================
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.queue().launch(server_name="0.0.0.0", server_port=7860)
