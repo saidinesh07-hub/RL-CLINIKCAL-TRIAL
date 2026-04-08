@@ -78,7 +78,7 @@ class ClinicalTrialEnv:
         self._rejected = 0
         self._done     = False
         self._history  = []
-        return {"observation": self.state(), "info": {"seed": seed or self.seed}}
+        return {"observation": self.state()}
 
     def step(self, action: int) -> dict:
         assert not self._done, "Episode finished — call reset()"
@@ -110,15 +110,15 @@ class ClinicalTrialEnv:
 
         return {
             "observation": self.state(),
-            "reward":      round(reward, 4),
+            "reward":      float(max(0.0, min(1.0, round(reward, 4)))),
             "terminated":  terminated,
             "truncated":   False,
-            "info":        info,
+            "info":        {},
         }
 
     def state(self) -> dict:
         if self._step >= len(self.patient_queue):
-            current_patient = None
+            current_patient = {}
         else:
             p = self.patient_queue[self._step]
             current_patient = {
@@ -144,7 +144,7 @@ class ClinicalTrialEnv:
                     "capacity_used":          t.capacity_used,
                     "slots_remaining":        t.slots_remaining,
                     "is_full":                t.is_full,
-                    "fill_rate":              round(t.fill_rate, 3),
+                    "fill_rate":              float(round(t.fill_rate, 3)),
                     "priority":               t.priority,
                     "diversity_target":       t.diversity_target,
                 }
@@ -155,7 +155,7 @@ class ClinicalTrialEnv:
                 "total_patients":    len(self.patient_queue),
                 "patients_assigned": self._assigned,
                 "patients_rejected": self._rejected,
-                "diversity_index":   round(self._compute_diversity_index(), 3),
+                "diversity_index":   float(round(self._compute_diversity_index(), 3)),
                 "done":              self._done,
             },
         }

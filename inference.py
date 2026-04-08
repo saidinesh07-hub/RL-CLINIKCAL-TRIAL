@@ -49,13 +49,17 @@ def run_inference(task: str = "medium", agent_name: str = "rule_based", episodes
         result = env.reset(seed=ep)
         obs = result["observation"]
         ep_reward = 0.0
+        step_count = 0
 
         while True:
+            step_count += 1
             action = agent.act(obs)
             result = env.step(action)
             next_obs = result["observation"]
             reward = result["reward"]
             ep_reward += reward
+
+            print(f"[STEP] episode={ep+1} step={step_count} reward={reward:.4f}")
 
             if hasattr(agent, "learn"):
                 agent.learn(obs, action, reward, next_obs, result["terminated"])
@@ -83,26 +87,13 @@ def run_inference(task: str = "medium", agent_name: str = "rule_based", episodes
             "diversity_score": diversity_score,
         })
 
-    # Compute min/max for reward normalization
-    if total_rewards:
-        min_reward = min(total_rewards)
-        max_reward = max(total_rewards)
-        reward_range = max_reward - min_reward + 1e-8
-    else:
-        min_reward = 0.0
-        max_reward = 0.0
-        reward_range = 1.0
-
     # Output START marker
     print("[START]")
 
-    # Print normalized episode data
+    # Episodes are run above with prints
+
+    # Populate episode_metrics
     for data in episode_data:
-        normalized_ep_reward = max(0.0, min(1.0, (data["reward"] - min_reward) / reward_range))
-
-        print(f"[STEP] Episode {data['episode']} → reward={normalized_ep_reward:.4f}, "
-              f"assignment={data['assignment_rate']:.4f}, diversity={data['diversity_score']:.4f}")
-
         episode_metrics.append({
             "episode": data["episode"],
             "reward": round(data["reward"], 4),
@@ -121,7 +112,7 @@ def run_inference(task: str = "medium", agent_name: str = "rule_based", episodes
     final_score = max(0.0, min(1.0, 0.5 * avg_assignment + 0.3 * avg_diversity + 0.2 * normalized_reward))
 
     # Output END marker with final score
-    print(f"[END] Final Score: {final_score:.4f}")
+    print(f"[END] score={final_score:.4f}")
 
     return {
         "score": round(final_score, 4),
@@ -137,10 +128,6 @@ if __name__ == "__main__":
     task_arg = sys.argv[1] if len(sys.argv) > 1 else "medium"
     agent_arg = sys.argv[2] if len(sys.argv) > 2 else "rule_based"
     episodes_arg = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-
-    # Suppress matplotlib if using main.py for UI
-    import matplotlib
-    matplotlib.use("Agg")
 
     results = run_inference(task_arg, agent_arg, episodes_arg)
     sys.exit(0)
