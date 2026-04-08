@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -97,14 +97,23 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
-def reset_env(payload: Optional[ResetRequest] = None) -> dict[str, Any]:
+async def reset_env(request: Request) -> dict[str, Any]:
     global _env
 
-    body = payload or ResetRequest()
-    task = body.task if body.task in TASK_MAP else "medium"
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+
+    seed = data.get("seed", None)
+    task = data.get("task", "medium")
+    if task not in TASK_MAP:
+        task = "medium"
 
     _env = _build_env(task)
-    result = _env.reset(seed=body.seed)
+    result = _env.reset(seed=seed)
     observation = result.get("observation", _env.state())
 
     return _reset_response(observation, task)
