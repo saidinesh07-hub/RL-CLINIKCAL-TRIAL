@@ -3,6 +3,7 @@ import random
 import math
 from dataclasses import dataclass, field
 from typing import Optional
+from tasks import TASK_MAP
 
 CONDITIONS = ["oncology", "cardiology", "neurology", "immunology"]
 AGE_GROUPS = ["pediatric", "adult", "elderly"]
@@ -52,7 +53,14 @@ class Trial:
 class ClinicalTrialEnv:
     metadata = {"version": "1.0.0"}
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict | str):
+        if isinstance(config, str):
+            if config not in TASK_MAP:
+                raise ValueError(f"Unknown difficulty '{config}'. Expected one of: {', '.join(TASK_MAP.keys())}")
+            config = TASK_MAP[config]
+        if not isinstance(config, dict):
+            raise TypeError("config must be a dict or one of: easy, medium, hard")
+
         self.n_patients      = config.get("n_patients", 50)
         self.n_trials        = config.get("n_trials", 6)
         self.capacity_range  = config.get("capacity_range", (8, 15))
