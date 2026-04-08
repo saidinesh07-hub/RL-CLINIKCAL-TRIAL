@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from env import ClinicalTrialEnv
 from tasks import TASK_MAP
 
-
-class ResetRequest(BaseModel):
-    seed: Optional[int] = Field(default=None, description="Optional reset seed")
-    task: str = Field(default="medium", description="Task difficulty: easy|medium|hard")
+from pydantic import BaseModel, Field
 
 
 class StepRequest(BaseModel):
@@ -97,13 +93,17 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
+@app.post("/reset/")
 async def reset_env(request: Request) -> dict[str, Any]:
     global _env
 
     try:
-        data = await request.json()
-        if not isinstance(data, dict):
+        raw_body = await request.body()
+        if not raw_body:
             data = {}
+        else:
+            parsed = await request.json()
+            data = parsed if isinstance(parsed, dict) else {}
     except Exception:
         data = {}
 
