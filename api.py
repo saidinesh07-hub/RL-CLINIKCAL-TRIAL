@@ -53,22 +53,19 @@ async def reset_env(seed: int = 42):
     }
 
 
-@app.post("/step")
-async def step_env(action: int):
-    """Execute action in environment."""
-    global _env, _step_count
-    if _env is None:
-        return {"error": "Environment not initialized. Call /reset first."}
-    result = _env.step(action)
-    _step_count += 1
-    return {
-        "observation": result["observation"],
-        "reward": result["reward"],
-        "terminated": result["terminated"],
-        "truncated": result["truncated"],
-        "info": result["info"],
-    }
+@api.post("/step")
+def step_api():
+    action = 0  # default
 
+    result = env.step(action)
+
+    return {
+        "observation": result.get("observation", {}),
+        "reward": float(result.get("reward", 0.0)),
+        "terminated": bool(result.get("terminated", False)),
+        "truncated": False,
+        "info": {}
+    }
 
 @app.get("/state")
 async def get_state():
