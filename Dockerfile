@@ -25,4 +25,4 @@ ENV PYTHONUNBUFFERED=1
 
 # Default: run Gradio app
 # To run inference instead: docker run --entrypoint "python inference.py" ...
-CMD ["python", "app.py"]
+CMD ["uvicorn", "app:api", "--host", "0.0.0.0", "--port", "7860"]
