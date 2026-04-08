@@ -58,4 +58,4 @@ with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
     btn.click(run_simulation, inputs=[task_input, agent_input, episodes_input], outputs=[summary_out, table_out, plot_out])
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)

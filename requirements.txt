@@ -1,6 +1,4 @@
-gradio>=4.0
-pyyaml>=6.0
-matplotlib>=3.0
-numpy>=1.21
-fastapi>=0.100
-uvicorn>=0.20
+gradio==4.36.1
+numpy
+pandas
+matplotlib
