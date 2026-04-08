@@ -125,7 +125,7 @@ endpoints:
     path: "/state"
 
 evaluation:
-  episodes: 10
+  episodes: 50
   deterministic: false
   aggregate: mean
   seed_strategy: episode_index

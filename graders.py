@@ -6,7 +6,7 @@ Each grader evaluates simulation output and returns a score in [0.0, 1.0].
 from env import ClinicalTrialEnv
 
 
-def grade_reward(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
+def grade_reward(env: ClinicalTrialEnv, agent, episodes: int = 50) -> dict:
     """
     Task 1: Reward Optimization
     Maximize cumulative reward across episodes.
@@ -49,7 +49,7 @@ def grade_reward(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
     }
 
 
-def grade_diversity(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
+def grade_diversity(env: ClinicalTrialEnv, agent, episodes: int = 50) -> dict:
     """
     Task 2: Fairness Optimization
     Maintain high diversity score (target > 0.8).
@@ -99,7 +99,7 @@ def grade_diversity(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
     }
 
 
-def grade_assignment(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
+def grade_assignment(env: ClinicalTrialEnv, agent, episodes: int = 50) -> dict:
     """
     Task 3: Balanced Assignment
     Maintain stable assignment rate and resource utilization.
@@ -158,7 +158,7 @@ def grade_assignment(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
     }
 
 
-def grade(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
+def grade(env: ClinicalTrialEnv, agent, episodes: int = 50) -> dict:
     """
     Legacy unified grader - kept for backward compatibility.
     Returns overall score combining all three task objectives.

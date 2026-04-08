@@ -1,7 +1,7 @@
 from env import ClinicalTrialEnv
 
 
-def grade(env: ClinicalTrialEnv, agent, episodes: int = 10) -> dict:
+def grade(env: ClinicalTrialEnv, agent, episodes: int = 50) -> dict:
     """
     Returns a dict with overall score [0,1] and sub-scores.
     score = 0.5 * assignment_rate + 0.3 * diversity_index + 0.2 * fill_rate

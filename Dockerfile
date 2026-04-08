@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
@@ -13,16 +13,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Expose both Gradio (7860) and FastAPI (8000) ports
-EXPOSE 7860 8000
+# Expose FastAPI port
+EXPOSE 8000
 
 # Environment variables for configuration
-ENV GRADIO_SERVER_NAME=0.0.0.0
-ENV GRADIO_SERVER_PORT=7860
 ENV API_BASE_URL=http://localhost:8000
 ENV MODEL_NAME=clinical-trial-rl
 ENV PYTHONUNBUFFERED=1
 
-# Default: run Gradio app
-# To run inference instead: docker run --entrypoint "python inference.py" ...
-CMD ["python", "app.py"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

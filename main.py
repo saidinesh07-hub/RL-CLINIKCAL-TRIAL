@@ -1,145 +1,152 @@
-"""
-CLI runner — no UI required.
-Usage:
-  python main.py [task] [agent] [episodes]
-  python main.py medium rule_based 10
-  python main.py hard greedy_fairness 5
-  python main.py easy q_learning 100
-"""
-import sys
-import matplotlib.pyplot as plt
-from env    import ClinicalTrialEnv
-from agent  import RandomAgent, RuleBasedAgent, GreedyFairnessAgent, QLearningAgent
-from tasks  import TASK_MAP
-from grader import grade
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from env import ClinicalTrialEnv
+from tasks import TASK_MAP
 
 
-def build_agent(name: str, n_trials: int):
-    name = name.lower().replace("-", "_")
-    if name == "random":
-        return RandomAgent(n_trials)
-    if name == "greedy_fairness":
-        return GreedyFairnessAgent()
-    if name == "q_learning":
-        return QLearningAgent(n_trials)
-    return RuleBasedAgent()
+class ResetRequest(BaseModel):
+    seed: Optional[int] = Field(default=None, description="Optional reset seed")
+    task: str = Field(default="medium", description="Task difficulty: easy|medium|hard")
 
 
-def run(task="medium", agent_name="rule_based", episodes=200):
-    config = dict(TASK_MAP.get(task, TASK_MAP["medium"]))
-    env    = ClinicalTrialEnv(config)
-    agent  = build_agent(agent_name, config["n_trials"])
+class StepRequest(BaseModel):
+    action: int = Field(..., ge=0, description="0 reject, 1..N trial id")
 
-    W = 70
-    print("=" * W)
-    print(f"  Training RL Agent — {task.upper()} | {agent.name} | {episodes} episodes")
-    print("=" * W)
 
-    episode_rewards = []
-    assignment_rates = []
-    diversity_scores = []
+app = FastAPI(title="Clinical Trial OpenEnv API", version="1.0.0")
 
-    for ep in range(episodes):
-        result = env.reset(seed=ep)
-        obs    = result["observation"]
-        total_reward = 0.0
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-        while True:
-            action = agent.act(obs)
-            result = env.step(action)
-            next_obs = result["observation"]
-            reward = result["reward"]
-            total_reward += reward
+_env: ClinicalTrialEnv | None = None
 
-            # Learn if agent has learn method
-            if hasattr(agent, 'learn'):
-                agent.learn(obs, action, reward, next_obs, result["terminated"])
 
-            obs = next_obs
+def _build_env(task: str) -> ClinicalTrialEnv:
+    cfg = dict(TASK_MAP.get(task, TASK_MAP["medium"]))
+    return ClinicalTrialEnv(cfg)
 
-            if result["terminated"]:
-                break
 
-        sys_s = obs["system"]
-        assignment_rate = sys_s['patients_assigned'] / max(sys_s['total_patients'], 1)
-        diversity_score = sys_s['diversity_index']
-        episode_rewards.append(total_reward)
-        assignment_rates.append(assignment_rate)
-        diversity_scores.append(diversity_score)
+def _to_api_state(observation: dict[str, Any]) -> list[float]:
+    patient = observation.get("patient", {}) or {}
+    system = observation.get("system", {}) or {}
+    trials = observation.get("trials", []) or []
 
-        # Update epsilon if agent has it
-        if hasattr(agent, 'update_epsilon'):
-            agent.update_epsilon()
+    total_patients = max(int(system.get("total_patients", 0)), 1)
+    n_trials = max(len(trials), 1)
 
-        # Per-episode logging
-        print(f"Episode {ep+1:3d}: Reward={total_reward:+.2f}, Assignment Rate={assignment_rate:.3f}, Diversity={diversity_score:.3f}")
+    state = [
+        float(int(system.get("step", 0))),
+        float(int(system.get("patients_assigned", 0)) / total_patients),
+        float(int(system.get("patients_rejected", 0)) / total_patients),
+        float(int(system.get("invalid_actions", 0)) / total_patients),
+        float(system.get("diversity_index", 0.0)),
+        float(system.get("average_fill_rate", 0.0)),
+        float(patient.get("severity", 0)),
+        float(len(patient.get("comorbidities", []) or [])),
+        float(int(system.get("recommended_action", 0)) / n_trials),
+    ]
+    return state
 
-    # Moving average for smoothing
-    def moving_average(data, window=10):
-        return [sum(data[max(0, i-window+1):i+1]) / len(data[max(0, i-window+1):i+1]) for i in range(len(data))]
 
-    smoothed_rewards = moving_average(episode_rewards)
-    smoothed_assignments = moving_average(assignment_rates)
-    smoothed_diversities = moving_average(diversity_scores)
+def _reset_response(observation: dict[str, Any], task: str) -> dict[str, Any]:
+    return {
+        "observation": observation,
+        "state": _to_api_state(observation),
+        "task": task,
+        "reward": 0.0,
+        "done": False,
+        "terminated": False,
+        "truncated": False,
+        "info": {"reason": "reset"},
+    }
 
-    # Plot rewards
-    plt.figure(figsize=(15, 5))
-    plt.subplot(1, 3, 1)
-    plt.plot(range(1, episodes+1), episode_rewards, alpha=0.3, label='Raw')
-    plt.plot(range(1, episodes+1), smoothed_rewards, label='Smoothed')
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    plt.title('Episode Rewards')
-    plt.legend()
-    plt.grid(True)
 
-    plt.subplot(1, 3, 2)
-    plt.plot(range(1, episodes+1), assignment_rates, alpha=0.3, label='Raw')
-    plt.plot(range(1, episodes+1), smoothed_assignments, label='Smoothed')
-    plt.xlabel('Episode')
-    plt.ylabel('Assignment Rate')
-    plt.title('Assignment Rates')
-    plt.legend()
-    plt.grid(True)
+def _step_response(result: dict[str, Any]) -> dict[str, Any]:
+    observation = result.get("observation", {})
+    reward = float(result.get("reward", 0.0))
+    terminated = bool(result.get("terminated", False))
+    truncated = bool(result.get("truncated", False))
+    info = result.get("info", {}) or {}
+    done = terminated or truncated
 
-    plt.subplot(1, 3, 3)
-    plt.plot(range(1, episodes+1), diversity_scores, alpha=0.3, label='Raw')
-    plt.plot(range(1, episodes+1), smoothed_diversities, label='Smoothed')
-    plt.xlabel('Episode')
-    plt.ylabel('Diversity Index')
-    plt.title('Diversity Scores')
-    plt.legend()
-    plt.grid(True)
+    return {
+        "observation": observation,
+        "state": _to_api_state(observation),
+        "reward": reward,
+        "done": done,
+        "terminated": terminated,
+        "truncated": truncated,
+        "info": info,
+    }
 
-    plt.tight_layout()
-    plt.savefig('training_progress.png', dpi=300)
-    # plt.show()  # Disabled to prevent blocking API response
 
-    # Final performance summary
-    print("-" * W)
-    print("FINAL PERFORMANCE SUMMARY:")
-    print(f"  Average Reward: {sum(episode_rewards)/episodes:+.2f}")
-    print(f"  Average Assignment Rate: {sum(assignment_rates)/episodes:.3f}")
-    print(f"  Average Diversity: {sum(diversity_scores)/episodes:.3f}")
-    print(f"  Best Reward: {max(episode_rewards):+.2f}")
-    print(f"  Best Assignment Rate: {max(assignment_rates):.3f}")
-    print(f"  Best Diversity: {max(diversity_scores):.3f}")
-    print("-" * W)
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
-    # Evaluate final performance
-    scores = grade(env, agent, episodes=10)
-    print(f"\nEVALUATION (10 test episodes):")
-    print(f"    Overall score   : {scores['score']:.4f} / 1.0000")
-    print(f"    Assignment rate : {scores['assignment_rate']:.4f}")
-    print(f"    Diversity index : {scores['diversity_index']:.4f}")
-    print(f"    Fill rate       : {scores['fill_rate']:.4f}")
-    print(f"    Mean reward     : {scores['mean_reward']:.4f}")
-    print("=" * W)
-    return scores
+
+@app.post("/reset")
+def reset_env(payload: Optional[ResetRequest] = None) -> dict[str, Any]:
+    global _env
+
+    body = payload or ResetRequest()
+    task = body.task if body.task in TASK_MAP else "medium"
+
+    _env = _build_env(task)
+    result = _env.reset(seed=body.seed)
+    observation = result.get("observation", _env.state())
+
+    return _reset_response(observation, task)
+
+
+@app.post("/step")
+def step_env(payload: StepRequest) -> dict[str, Any]:
+    global _env
+
+    if _env is None:
+        _env = _build_env("medium")
+        result = _env.reset(seed=0)
+        observation = result.get("observation", _env.state())
+        return {
+            **_reset_response(observation, "medium"),
+            "info": {"reason": "auto_reset_before_step"},
+        }
+
+    result = _env.step(payload.action)
+    return _step_response(result)
+
+
+@app.get("/state")
+def state_env() -> dict[str, Any]:
+    global _env
+
+    if _env is None:
+        _env = _build_env("medium")
+        result = _env.reset(seed=0)
+        observation = result.get("observation", _env.state())
+    else:
+        observation = _env.state()
+
+    done = bool((observation.get("system", {}) or {}).get("done", False))
+    return {
+        "observation": observation,
+        "state": _to_api_state(observation),
+        "done": done,
+    }
 
 
 if __name__ == "__main__":
-    task_arg     = sys.argv[1] if len(sys.argv) > 1 else "medium"
-    agent_arg    = sys.argv[2] if len(sys.argv) > 2 else "rule_based"
-    episodes_arg = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-    run(task_arg, agent_arg, episodes_arg)
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
