@@ -1,131 +1,78 @@
 import gradio as gr
+import pandas as pd
 import matplotlib.pyplot as plt
-from fastapi import FastAPI, Request
 
-from inference import run_inference
+from inference import run_simulation
 from env import ClinicalTrialEnv
 
-# 🔥 FastAPI for OpenEnv
-api = FastAPI()
-
-# 🔥 Env instance
 env = ClinicalTrialEnv("medium")
 
 
-# ================= OPENENV API =================
-@api.post("/reset")
-def reset_api():
+# 🔥 OpenEnv functions (NO FastAPI)
+
+def reset():
     result = env.reset()
-    return {
-        "observation": result["observation"]
-    }
+    return {"observation": result.get("observation", {})}
 
 
-@api.post("/step")
-async def step_api(request: Request):
-    try:
-        data = await request.json()
-    except:
-        data = {}
-
-    action = data.get("action", 0)  # default action
-
+def step(action=0):
     result = env.step(action)
-
     return {
-        "observation": result["observation"],
-        "reward": float(result["reward"]),
-        "terminated": bool(result["terminated"]),
+        "observation": result.get("observation", {}),
+        "reward": float(result.get("reward", 0.0)),
+        "terminated": bool(result.get("terminated", False)),
         "truncated": False,
         "info": {}
     }
 
 
-# ================= UI LOGIC =================
-def normalize_rewards(data):
-    rewards = [ep['reward'] for ep in data]
-    min_reward = min(rewards) if rewards else 0.0
-    max_reward = max(rewards) if rewards else 0.0
-    span = max_reward - min_reward + 1e-8
+# ================= UI =================
 
-    normalized = []
-    for ep in data:
-        norm_reward = (ep['reward'] - min_reward) / span
-        normalized.append({
-            'episode': ep['episode'],
-            'reward': norm_reward,
-            'assignment_rate': ep['assignment_rate'],
-            'diversity_score': ep['diversity_score'],
-        })
-    return normalized
+def create_table(data):
+    return pd.DataFrame(data)
 
 
-def run_simulation(task, agent, episodes):
-    results = run_inference(task, agent, int(episodes))
-
-    summary = (
-        f"Final Score: {results['score']}\n"
-        f"Mean Reward: {results['mean_reward']}\n"
-        f"Assignment Rate: {results['assignment_rate']}\n"
-        f"Diversity Index: {results['diversity_index']}"
-    )
-
-    normalized_episodes = normalize_rewards(results['episodes'])
-
-    episodes_data = [
-        [ep['episode'], ep['reward'], ep['assignment_rate'], ep['diversity_score']]
-        for ep in normalized_episodes
-    ]
-
-    episodes_nums = [ep['episode'] for ep in normalized_episodes]
-    rewards = [ep['reward'] for ep in normalized_episodes]
-
-    fig = plt.figure()
-    plt.plot(episodes_nums, rewards, marker='o')
-    plt.xlabel('Episode')
-    plt.ylabel('Reward')
-    plt.title('Reward vs Episode')
-    plt.grid(True)
-
-    return summary, episodes_data, fig
+def create_plot(data):
+    df = pd.DataFrame(data)
+    plt.figure()
+    plt.plot(df["episode"], df["reward"])
+    plt.xlabel("Episode")
+    plt.ylabel("Reward")
+    plt.title("Reward vs Episode")
+    return plt
 
 
-# ================= GRADIO UI =================
+def on_run_simulation(task, agent, episodes):
+    score, episodes_data = run_simulation(task, agent, episodes)
+
+    summary = f"Final Score: {score:.4f}"
+    table = create_table(episodes_data)
+    plot = create_plot(episodes_data)
+
+    return summary, table, plot
+
+
 with gr.Blocks(title="AI Clinical Trial Optimization") as demo:
-    gr.Markdown("# AI Clinical Trial Optimization")
+
+    gr.Markdown("## AI Clinical Trial Optimization")
 
     with gr.Row():
-        task_input = gr.Dropdown(
-            choices=["easy", "medium", "hard"],
-            value="medium",
-            label="Task Difficulty"
-        )
-        agent_input = gr.Dropdown(
-            choices=["random", "rule_based", "greedy_fairness", "q_learning"],
-            value="rule_based",
-            label="Agent Type"
-        )
-        episodes_input = gr.Slider(
-            minimum=1, maximum=50, value=10, step=1,
-            label="Number of Episodes"
-        )
+        task_input = gr.Dropdown(["easy", "medium", "hard"], value="medium")
+        agent_input = gr.Dropdown(["random", "rule_based", "greedy_fairness", "q_learning"], value="rule_based")
+        episodes_input = gr.Slider(1, 50, value=10, step=1)
 
     btn = gr.Button("Run Simulation")
 
-    summary_out = gr.Textbox(label="Summary", lines=4)
-    table_out = gr.Dataframe(
-        headers=["Episode", "Reward", "Assignment Rate", "Diversity Score"],
-        label="Episode Results"
-    )
-    plot_out = gr.Plot(label="Reward Progression")
+    summary_out = gr.Textbox()
+    table_out = gr.Dataframe()
+    plot_out = gr.Plot()
 
     btn.click(
-        run_simulation,
+        on_run_simulation,
         inputs=[task_input, agent_input, episodes_input],
         outputs=[summary_out, table_out, plot_out]
     )
 
 
-# ================= LAUNCH =================
-if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+# 🔥 CRITICAL: expose endpoints via gradio
+demo.queue().launch(server_name="0.0.0.0", server_port=7860)
