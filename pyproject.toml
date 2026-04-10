@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-trial-rl"
+version = "1.0.0"
+description = "Clinical trial patient-trial matching RL environment with OpenEnv-compatible API"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "DINO-17" }
+]
+dependencies = [
+  "gradio==4.36.1",
+  "huggingface_hub==0.23.0",
+  "numpy",
+  "pandas",
+  "matplotlib",
+  "fastapi",
+  "uvicorn",
+  "requests"
+]
+
+[tool.setuptools]
+py-modules = [
+  "agent",
+  "api",
+  "app",
+  "env",
+  "grader",
+  "graders",
+  "inference",
+  "main",
+  "tasks",
+  "validate_graders",
+  "validate_openenv"
+]
