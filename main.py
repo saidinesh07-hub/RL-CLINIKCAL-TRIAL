@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from agent import GreedyFairnessAgent, QLearningAgent, RandomAgent, RuleBasedAgent
 from env import ClinicalTrialEnv
+from grader import grade
 from tasks import TASK_MAP
 
 from pydantic import BaseModel, Field
@@ -31,6 +34,16 @@ _env: ClinicalTrialEnv | None = None
 def _build_env(task: str) -> ClinicalTrialEnv:
     cfg = dict(TASK_MAP.get(task, TASK_MAP["medium"]))
     return ClinicalTrialEnv(cfg)
+
+
+def _build_agent(agent_name: str, n_trials: int):
+    if agent_name == "random":
+        return RandomAgent(n_trials=n_trials)
+    if agent_name == "greedy_fairness":
+        return GreedyFairnessAgent()
+    if agent_name == "q_learning":
+        return QLearningAgent(n_trials=n_trials)
+    return RuleBasedAgent()
 
 
 def _to_api_state(observation: dict[str, Any]) -> list[float]:
@@ -90,6 +103,45 @@ def _step_response(result: dict[str, Any]) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready() -> dict[str, str]:
+    return {"status": "ready"}
+
+
+@app.get("/live")
+def live() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+@app.get("/api/health")
+def api_health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "clinical-trial-openenv",
+        "endpoints": [
+            "/reset",
+            "/step",
+            "/state",
+            "/health",
+            "/healthz",
+            "/ready",
+            "/live",
+            "/api/health",
+            "/api/run-simulation",
+        ],
+    }
 
 
 @app.post("/reset")
@@ -155,7 +207,29 @@ def state_env() -> dict[str, Any]:
     }
 
 
+@app.get("/api/run-simulation")
+def run_simulation(
+    task: str = Query("medium", description="easy, medium, hard"),
+    agent: str = Query("rule_based", description="random, rule_based, greedy_fairness, q_learning"),
+    episodes: int = Query(10, ge=1, le=500),
+) -> dict[str, Any]:
+    if task not in TASK_MAP:
+        task = "medium"
+
+    env = _build_env(task)
+    model = _build_agent(agent, n_trials=env.n_trials)
+    results = grade(env, model, episodes=episodes)
+    return {
+        "status": "ok",
+        "task": task,
+        "agent": agent,
+        "episodes": episodes,
+        "metrics": results,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    port = int(os.getenv("PORT", "7860"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

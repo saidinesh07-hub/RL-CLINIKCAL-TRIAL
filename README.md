@@ -230,17 +230,4 @@ docker run -p 7860:7860 clinical-trial-rl
 ```
 
 Push to a HuggingFace Space (Docker SDK) and it deploys automatically.
-=======
----
-title: RL Clinical Trial
-emoji: 🔥
-colorFrom: gray
-colorTo: indigo
-sdk: gradio
-sdk_version: 6.11.0
-app_file: app.py
-pinned: false
----
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
