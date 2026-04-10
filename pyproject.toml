@@ -12,6 +12,7 @@ authors = [
   { name = "DINO-17" }
 ]
 dependencies = [
+  "openenv-core>=0.2.0",
   "fastapi==0.115.12",
   "uvicorn==0.34.2",
   "requests==2.32.3",
