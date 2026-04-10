@@ -12,7 +12,7 @@ authors = [
   { name = "DINO-17" }
 ]
 dependencies = [
-  "gradio==4.36.1",
+  "openenv-core>=0.2.0",
   "huggingface_hub==0.23.0",
   "numpy",
   "pandas",
@@ -21,6 +21,9 @@ dependencies = [
   "uvicorn",
   "requests"
 ]
+
+[project.scripts]
+server = "server.app:main"
 
 [tool.setuptools]
 py-modules = [
@@ -36,3 +39,7 @@ py-modules = [
   "validate_graders",
   "validate_openenv"
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*"]
