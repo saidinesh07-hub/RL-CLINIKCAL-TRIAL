@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agent import GreedyFairnessAgent, QLearningAgent, RandomAgent, RuleBasedAgent
 from env import ClinicalTrialEnv
-from grader import grade
 from tasks import TASK_MAP
 
 from pydantic import BaseModel, Field
@@ -44,6 +43,65 @@ def _build_agent(agent_name: str, n_trials: int):
     if agent_name == "q_learning":
         return QLearningAgent(n_trials=n_trials)
     return RuleBasedAgent()
+
+
+def _run_simulation_with_trace(env: ClinicalTrialEnv, model: Any, episodes: int) -> tuple[dict[str, float], list[dict[str, float | int]]]:
+    assignment_rates: list[float] = []
+    diversity_scores: list[float] = []
+    fill_scores: list[float] = []
+    total_rewards: list[float] = []
+    episode_rows: list[dict[str, float | int]] = []
+
+    for ep in range(episodes):
+        result = env.reset(seed=ep)
+        obs = result["observation"]
+        ep_reward = 0.0
+
+        while True:
+            action = model.act(obs)
+            result = env.step(action)
+            obs = result["observation"]
+            ep_reward += float(result["reward"])
+            if result["terminated"] or result["truncated"]:
+                break
+
+        sys_state = obs["system"]
+        n_total = max(int(sys_state["total_patients"]), 1)
+        assignment_rate = float(sys_state["patients_assigned"]) / n_total
+        diversity_index = float(sys_state["diversity_index"])
+        fill_rate = sum(float(t["fill_rate"]) for t in obs["trials"]) / max(len(obs["trials"]), 1)
+
+        assignment_rates.append(assignment_rate)
+        diversity_scores.append(diversity_index)
+        fill_scores.append(fill_rate)
+        total_rewards.append(ep_reward)
+
+        episode_rows.append(
+            {
+                "episode": ep + 1,
+                "reward": round(ep_reward, 4),
+                "assignmentRate": round(assignment_rate, 4),
+                "diversityIndex": round(diversity_index, 4),
+                "fillRate": round(fill_rate, 4),
+            }
+        )
+
+    def _mean(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    ar = _mean(assignment_rates)
+    di = _mean(diversity_scores)
+    fs = _mean(fill_scores)
+    score = max(0.0, min(1.0, 0.5 * ar + 0.3 * di + 0.2 * fs))
+
+    metrics = {
+        "score": round(score, 4),
+        "assignment_rate": round(ar, 4),
+        "diversity_index": round(di, 4),
+        "fill_rate": round(fs, 4),
+        "mean_reward": round(_mean(total_rewards), 4),
+    }
+    return metrics, episode_rows
 
 
 def _to_api_state(observation: dict[str, Any]) -> list[float]:
@@ -208,6 +266,7 @@ def state_env() -> dict[str, Any]:
 
 
 @app.get("/api/run-simulation")
+@app.get("/run-simulation")
 def run_simulation(
     task: str = Query("medium", description="easy, medium, hard"),
     agent: str = Query("rule_based", description="random, rule_based, greedy_fairness, q_learning"),
@@ -218,13 +277,16 @@ def run_simulation(
 
     env = _build_env(task)
     model = _build_agent(agent, n_trials=env.n_trials)
-    results = grade(env, model, episodes=episodes)
+    metrics, episode_rows = _run_simulation_with_trace(env, model, episodes=episodes)
     return {
         "status": "ok",
         "task": task,
         "agent": agent,
-        "episodes": episodes,
-        "metrics": results,
+        "requestedEpisodes": episodes,
+        "metrics": metrics,
+        "finalMetrics": metrics,
+        "episodeCount": episodes,
+        "episodes": episode_rows,
     }
 
 
