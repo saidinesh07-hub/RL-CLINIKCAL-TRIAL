@@ -210,12 +210,33 @@ def run_inference(
     return run_local(task=task, agent_name=agent_name, episodes=episodes)
 
 
+def _print_structured_output(result: dict[str, Any]) -> None:
+    """Emit OpenEnv-style structured logs for CLI execution."""
+    print("[START]")
+    for episode in result.get("episodes", []):
+        ep_no = int(episode.get("episode", 0))
+        reward = float(episode.get("reward", 0.0))
+        assignment = float(episode.get("assignment_rate", 0.0))
+        diversity = float(episode.get("diversity_score", 0.0))
+        print(
+            f"[STEP] Episode {ep_no} -> reward={reward:+.4f}, "
+            f"assignment={assignment:.4f}, diversity={diversity:.4f}"
+        )
+
+    final_score = float(result.get("score", 0.0))
+    print(f"[END] Final Score: {final_score:.4f}")
+
+
 if __name__ == "__main__":
     task_arg = sys.argv[1] if len(sys.argv) > 1 else "medium"
     agent_arg = sys.argv[2] if len(sys.argv) > 2 else "rule_based"
     episodes_arg = int(sys.argv[3]) if len(sys.argv) > 3 else 50
     mode_arg = (sys.argv[4] if len(sys.argv) > 4 else "local").lower()
     use_api_arg = mode_arg == "api"
+    json_output = "--json" in sys.argv
 
     result = run_inference(task=task_arg, agent_name=agent_arg, episodes=episodes_arg, use_api=use_api_arg)
-    print(json.dumps(result, indent=2))
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        _print_structured_output(result)
