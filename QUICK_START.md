@@ -164,6 +164,7 @@ python main.py medium rule_based 200
 export API_BASE_URL=http://localhost:8000     # API base URL
 export MODEL_NAME=clinical-trial-rl            # Model name
 export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx       # HF token
+export API_KEY=your_api_key                   # Injected OpenAI-compatible API key
 ```
 
 ## 13. Troubleshooting
