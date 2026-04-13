@@ -168,16 +168,52 @@ def root() -> HTMLResponse:
             color: var(--ok);
             font-size: 13px;
         }
-        pre {
-            margin: 0;
-            background: #071425;
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .kpi {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #244266;
+            padding: 8px 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+        .kpi strong {
+            color: var(--text);
+            font-weight: 700;
+        }
+        .section-title {
+            margin: 0 0 10px;
+            font-size: 16px;
+        }
+        .table-wrap {
+            overflow: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 8px;
+            border-bottom: 1px solid #27456f;
+            text-align: left;
+            white-space: nowrap;
+        }
+        th {
+            color: var(--muted);
+            font-weight: 600;
+        }
+        .status {
+            margin-top: 10px;
             border: 1px solid #27456f;
             border-radius: 10px;
-            padding: 12px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            max-height: 360px;
-            overflow: auto;
+            padding: 10px;
+            color: var(--muted);
         }
     </style>
 </head>
@@ -214,19 +250,67 @@ def root() -> HTMLResponse:
 
         <div class="metrics" id="metrics"></div>
 
+        <div class="detail-grid">
+            <div class="card">
+                <h3 class="section-title">Patient Snapshot</h3>
+                <div id="patient"></div>
+            </div>
+            <div class="card">
+                <h3 class="section-title">System Snapshot</h3>
+                <div id="system"></div>
+            </div>
+        </div>
+
         <div class="card">
-            <pre id="output">Ready.</pre>
+            <h3 class="section-title">Trials</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Trial</th>
+                            <th>Priority</th>
+                            <th>Capacity</th>
+                            <th>Enrolled</th>
+                            <th>Fill</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trials"></tbody>
+                </table>
+            </div>
+            <div class="status" id="status">Ready.</div>
         </div>
     </div>
 
     <script>
-        const output = document.getElementById('output');
         const metrics = document.getElementById('metrics');
+        const patient = document.getElementById('patient');
+        const system = document.getElementById('system');
+        const trials = document.getElementById('trials');
+        const status = document.getElementById('status');
+
+        function htmlSafe(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function kvRows(items) {
+            return items.map(([k, v]) => `
+                <div class="kpi">
+                    <span>${htmlSafe(k)}</span>
+                    <strong>${htmlSafe(v)}</strong>
+                </div>
+            `).join('');
+        }
 
         function show(data) {
-            output.textContent = JSON.stringify(data, null, 2);
             const obs = (data || {}).observation || {};
             const sys = obs.system || {};
+            const pat = obs.patient || {};
+            const trialList = Array.isArray(obs.trials) ? obs.trials : [];
             const trialCount = Array.isArray(obs.trials) ? obs.trials.length : 0;
             const parts = [
                 `step: ${sys.step ?? '-'}`,
@@ -239,6 +323,47 @@ def root() -> HTMLResponse:
                 `done: ${sys.done ?? data.done ?? false}`
             ];
             metrics.innerHTML = parts.map(v => `<span class="pill">${v}</span>`).join('');
+
+            const comorbidities = Array.isArray(pat.comorbidities) ? pat.comorbidities.join(', ') : '-';
+            patient.innerHTML = kvRows([
+                ['condition', pat.condition ?? '-'],
+                ['severity', pat.severity ?? '-'],
+                ['age_group', pat.age_group ?? '-'],
+                ['comorbidities', comorbidities || '-']
+            ]);
+
+            system.innerHTML = kvRows([
+                ['total_patients', sys.total_patients ?? '-'],
+                ['patients_assigned', sys.patients_assigned ?? '-'],
+                ['patients_rejected', sys.patients_rejected ?? '-'],
+                ['invalid_actions', sys.invalid_actions ?? '-'],
+                ['average_fill_rate', Number(sys.average_fill_rate ?? 0).toFixed(3)],
+                ['diversity_index', Number(sys.diversity_index ?? 0).toFixed(3)],
+                ['recommended_action', sys.recommended_action ?? '-']
+            ]);
+
+            if (trialList.length === 0) {
+                trials.innerHTML = '<tr><td colspan="5">No trials available</td></tr>';
+            } else {
+                trials.innerHTML = trialList.map((t) => {
+                    const cap = Number(t.capacity ?? 0);
+                    const enrolled = Number(t.enrolled ?? t.filled ?? 0);
+                    const fill = cap > 0 ? (enrolled / cap) : 0;
+                    return `
+                        <tr>
+                            <td>${htmlSafe(t.trial_id ?? '-')}</td>
+                            <td>${htmlSafe(t.priority ?? '-')}</td>
+                            <td>${htmlSafe(cap)}</td>
+                            <td>${htmlSafe(enrolled)}</td>
+                            <td>${htmlSafe(fill.toFixed(3))}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            const reward = Number(data.reward ?? 0).toFixed(4);
+            const done = sys.done ?? data.done ?? false;
+            status.textContent = `Last update: reward ${reward}, done ${done}, mode ${data.task ?? 'active'}.`;
         }
 
         async function postJson(path, payload) {
@@ -278,7 +403,7 @@ def root() -> HTMLResponse:
         };
 
         getJson('/state').then(show).catch(err => {
-            output.textContent = `Failed to load state: ${err}`;
+            status.textContent = `Failed to load state: ${err}`;
         });
     </script>
 </body>
