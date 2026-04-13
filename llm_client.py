@@ -5,7 +5,12 @@ import os
 
 def get_openai_client():
     """Build an OpenAI-compatible client from injected environment variables."""
-    from openai import OpenAI
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "Optional dependency missing: install `openai` to use llm_client.get_openai_client()."
+        ) from exc
 
     # Required by evaluator: use injected API_BASE_URL and API_KEY values.
     base_url = os.environ["API_BASE_URL"]

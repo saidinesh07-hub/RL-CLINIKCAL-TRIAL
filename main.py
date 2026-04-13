@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
-from agent import GreedyFairnessAgent, QLearningAgent, RandomAgent, RuleBasedAgent
 from env import ClinicalTrialEnv
 from tasks import TASK_MAP
 
@@ -33,75 +33,6 @@ _env: ClinicalTrialEnv | None = None
 def _build_env(task: str) -> ClinicalTrialEnv:
     cfg = dict(TASK_MAP.get(task, TASK_MAP["medium"]))
     return ClinicalTrialEnv(cfg)
-
-
-def _build_agent(agent_name: str, n_trials: int):
-    if agent_name == "random":
-        return RandomAgent(n_trials=n_trials)
-    if agent_name == "greedy_fairness":
-        return GreedyFairnessAgent()
-    if agent_name == "q_learning":
-        return QLearningAgent(n_trials=n_trials)
-    return RuleBasedAgent()
-
-
-def _run_simulation_with_trace(env: ClinicalTrialEnv, model: Any, episodes: int) -> tuple[dict[str, float], list[dict[str, float | int]]]:
-    assignment_rates: list[float] = []
-    diversity_scores: list[float] = []
-    fill_scores: list[float] = []
-    total_rewards: list[float] = []
-    episode_rows: list[dict[str, float | int]] = []
-
-    for ep in range(episodes):
-        result = env.reset(seed=ep)
-        obs = result["observation"]
-        ep_reward = 0.0
-
-        while True:
-            action = model.act(obs)
-            result = env.step(action)
-            obs = result["observation"]
-            ep_reward += float(result["reward"])
-            if result["terminated"] or result["truncated"]:
-                break
-
-        sys_state = obs["system"]
-        n_total = max(int(sys_state["total_patients"]), 1)
-        assignment_rate = float(sys_state["patients_assigned"]) / n_total
-        diversity_index = float(sys_state["diversity_index"])
-        fill_rate = sum(float(t["fill_rate"]) for t in obs["trials"]) / max(len(obs["trials"]), 1)
-
-        assignment_rates.append(assignment_rate)
-        diversity_scores.append(diversity_index)
-        fill_scores.append(fill_rate)
-        total_rewards.append(ep_reward)
-
-        episode_rows.append(
-            {
-                "episode": ep + 1,
-                "reward": round(ep_reward, 4),
-                "assignmentRate": round(assignment_rate, 4),
-                "diversityIndex": round(diversity_index, 4),
-                "fillRate": round(fill_rate, 4),
-            }
-        )
-
-    def _mean(values: list[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
-
-    ar = _mean(assignment_rates)
-    di = _mean(diversity_scores)
-    fs = _mean(fill_scores)
-    score = max(0.0, min(1.0, 0.5 * ar + 0.3 * di + 0.2 * fs))
-
-    metrics = {
-        "score": round(score, 4),
-        "assignment_rate": round(ar, 4),
-        "diversity_index": round(di, 4),
-        "fill_rate": round(fs, 4),
-        "mean_reward": round(_mean(total_rewards), 4),
-    }
-    return metrics, episode_rows
 
 
 def _to_api_state(observation: dict[str, Any]) -> list[float]:
@@ -163,43 +94,206 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/ready")
-def ready() -> dict[str, str]:
-    return {"status": "ready"}
-
-
-@app.get("/live")
-def live() -> dict[str, str]:
-    return {"status": "alive"}
-
-
-@app.get("/api/health")
-def api_health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
 @app.get("/")
-def root() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "service": "clinical-trial-openenv",
-        "endpoints": [
-            "/reset",
-            "/step",
-            "/state",
-            "/health",
-            "/healthz",
-            "/ready",
-            "/live",
-            "/api/health",
-            "/api/run-simulation",
-        ],
-    }
+def root() -> HTMLResponse:
+        return HTMLResponse(
+                """<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clinical Trial RL Dashboard</title>
+    <style>
+        :root {
+            --bg: #091323;
+            --bg2: #142c4a;
+            --card: #10203a;
+            --accent: #4fd1c5;
+            --accent2: #f6ad55;
+            --text: #edf2f7;
+            --muted: #a0aec0;
+            --ok: #68d391;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text);
+            background: radial-gradient(circle at top right, var(--bg2), var(--bg));
+            min-height: 100vh;
+            padding: 24px;
+        }
+        .wrap { max-width: 1000px; margin: 0 auto; }
+        .title { margin: 0 0 6px; font-size: 30px; }
+        .sub { margin: 0 0 16px; color: var(--muted); }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid #27456f;
+            border-radius: 12px;
+            padding: 12px;
+        }
+        label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #335b8f;
+            background: #0b1b30;
+            color: var(--text);
+        }
+        .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+        button {
+            border: 0;
+            border-radius: 9px;
+            padding: 10px 12px;
+            background: var(--accent);
+            color: #06241f;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        button.secondary { background: var(--accent2); color: #2a1900; }
+        button.ghost { background: #26476f; color: var(--text); }
+        .metrics { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+        .pill {
+            background: #0b1b30;
+            border: 1px solid #335b8f;
+            border-radius: 999px;
+            padding: 6px 10px;
+            color: var(--ok);
+            font-size: 13px;
+        }
+        pre {
+            margin: 0;
+            background: #071425;
+            border: 1px solid #27456f;
+            border-radius: 10px;
+            padding: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 360px;
+            overflow: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1 class="title">Clinical Trial RL Dashboard</h1>
+        <p class="sub">Visible UI for the OpenEnv API. Use controls below to reset and step the environment.</p>
+
+        <div class="grid">
+            <div class="card">
+                <label for="task">Task</label>
+                <select id="task">
+                    <option value="easy">easy</option>
+                    <option value="medium" selected>medium</option>
+                    <option value="hard">hard</option>
+                </select>
+            </div>
+            <div class="card">
+                <label for="seed">Seed</label>
+                <input id="seed" type="number" value="0" />
+            </div>
+            <div class="card">
+                <label for="action">Action (0 reject, 1..N trial id)</label>
+                <input id="action" type="number" min="0" value="1" />
+            </div>
+        </div>
+
+        <div class="actions">
+            <button id="btn-reset">Reset</button>
+            <button id="btn-step" class="secondary">Step</button>
+            <button id="btn-recommended" class="ghost">Step Recommended</button>
+            <button id="btn-state" class="ghost">Get State</button>
+        </div>
+
+        <div class="metrics" id="metrics"></div>
+
+        <div class="card">
+            <pre id="output">Ready.</pre>
+        </div>
+    </div>
+
+    <script>
+        const output = document.getElementById('output');
+        const metrics = document.getElementById('metrics');
+
+        function show(data) {
+            output.textContent = JSON.stringify(data, null, 2);
+            const obs = (data || {}).observation || {};
+            const sys = obs.system || {};
+            const trialCount = Array.isArray(obs.trials) ? obs.trials.length : 0;
+            const parts = [
+                `step: ${sys.step ?? '-'}`,
+                `assigned: ${sys.patients_assigned ?? '-'}`,
+                `rejected: ${sys.patients_rejected ?? '-'}`,
+                `diversity: ${Number(sys.diversity_index ?? 0).toFixed(3)}`,
+                `fill: ${Number(sys.average_fill_rate ?? 0).toFixed(3)}`,
+                `recommended: ${sys.recommended_action ?? '-'}`,
+                `trials: ${trialCount}`,
+                `done: ${sys.done ?? data.done ?? false}`
+            ];
+            metrics.innerHTML = parts.map(v => `<span class="pill">${v}</span>`).join('');
+        }
+
+        async function postJson(path, payload) {
+            const res = await fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            return await res.json();
+        }
+
+        async function getJson(path) {
+            const res = await fetch(path);
+            return await res.json();
+        }
+
+        document.getElementById('btn-reset').onclick = async () => {
+            const task = document.getElementById('task').value;
+            const seed = Number(document.getElementById('seed').value);
+            show(await postJson('/reset', { task, seed }));
+        };
+
+        document.getElementById('btn-step').onclick = async () => {
+            const action = Number(document.getElementById('action').value);
+            show(await postJson('/step', { action }));
+        };
+
+        document.getElementById('btn-recommended').onclick = async () => {
+            const s = await getJson('/state');
+            const rec = Number((((s || {}).observation || {}).system || {}).recommended_action || 0);
+            document.getElementById('action').value = String(rec);
+            show(await postJson('/step', { action: rec }));
+        };
+
+        document.getElementById('btn-state').onclick = async () => {
+            show(await getJson('/state'));
+        };
+
+        getJson('/state').then(show).catch(err => {
+            output.textContent = `Failed to load state: ${err}`;
+        });
+    </script>
+</body>
+</html>
+"""
+        )
+
+
+@app.get("/api")
+def api_info() -> dict[str, Any]:
+        return {
+                "status": "ok",
+                "service": "clinical-trial-openenv",
+                "endpoints": ["/reset", "/step", "/state", "/health"],
+        }
 
 
 @app.post("/reset")
@@ -262,31 +356,6 @@ def state_env() -> dict[str, Any]:
         "observation": observation,
         "state": _to_api_state(observation),
         "done": done,
-    }
-
-
-@app.get("/api/run-simulation")
-@app.get("/run-simulation")
-def run_simulation(
-    task: str = Query("medium", description="easy, medium, hard"),
-    agent: str = Query("rule_based", description="random, rule_based, greedy_fairness, q_learning"),
-    episodes: int = Query(10, ge=1, le=500),
-) -> dict[str, Any]:
-    if task not in TASK_MAP:
-        task = "medium"
-
-    env = _build_env(task)
-    model = _build_agent(agent, n_trials=env.n_trials)
-    metrics, episode_rows = _run_simulation_with_trace(env, model, episodes=episodes)
-    return {
-        "status": "ok",
-        "task": task,
-        "agent": agent,
-        "requestedEpisodes": episodes,
-        "metrics": metrics,
-        "finalMetrics": metrics,
-        "episodeCount": episodes,
-        "episodes": episode_rows,
     }
 
 
